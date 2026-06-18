@@ -78,7 +78,6 @@ class RAGPipeline:
         latency["rerank_ms"] = (time.perf_counter() - t1) * 1000
 
         context_texts = [c["text"] for c in contexts]
-        print("\ndebugging context_texts: ", context_texts)
         context_block = "\n\n".join(
             f"[Source: {c.get('source', 'unknown')}, chunk={c.get('chunk_id', '?')}]\n{c['text']}"
             for c in contexts

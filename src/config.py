@@ -59,7 +59,7 @@ class LLMConfig:
     provider: Literal["qwen", "gemini", "openai", "ollama", "mock"] = field(
         default_factory=lambda: os.getenv("LLM_PROVIDER", "mock")  # type: ignore[return-value]
     )
-    model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "qwen-plus"))
+    model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "qwen3:8b"))
     qwen_api_key: str = field(
         default_factory=lambda: _env("DASHSCOPE_API_KEY") or _env("QWEN_API_KEY")
     )
@@ -80,6 +80,12 @@ class LLMConfig:
     max_tokens: int = field(
         default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "1024"))
     )
+    timeout: float = field(
+        default_factory=lambda: float(os.getenv("LLM_TIMEOUT", "600"))
+    )
+    ollama_think: bool = field(
+        default_factory=lambda: os.getenv("OLLAMA_THINK", "false").lower() == "true"
+    )
 
 
 @dataclass
@@ -93,10 +99,17 @@ class TrackingConfig:
 
 @dataclass
 class AppConfig:
-    api_host: str = os.getenv("API_HOST", "0.0.0.0")
-    api_port: int = int(os.getenv("API_PORT", "8000"))
-    streamlit_port: int = int(os.getenv("STREAMLIT_PORT", "8501"))
-    api_base_url: str = os.getenv("API_BASE_URL", "http://localhost:8000")
+    api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
+    api_port: int = field(default_factory=lambda: int(os.getenv("API_PORT", "8000")))
+    streamlit_port: int = field(
+        default_factory=lambda: int(os.getenv("STREAMLIT_PORT", "8501"))
+    )
+    api_base_url: str = field(
+        default_factory=lambda: os.getenv("API_BASE_URL", "http://localhost:8000")
+    )
+    client_timeout: float = field(
+        default_factory=lambda: float(os.getenv("API_CLIENT_TIMEOUT", "600"))
+    )
 
 
 @dataclass

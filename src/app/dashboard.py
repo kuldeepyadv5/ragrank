@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import os
 
 import httpx
 import pandas as pd
@@ -21,17 +20,18 @@ st.set_page_config(
 
 cfg = get_config()
 API_BASE = cfg.app.api_base_url
+API_TIMEOUT = float(os.getenv("API_CLIENT_TIMEOUT", "600"))
 
 
 def api_get(path: str) -> dict:
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=API_TIMEOUT) as client:
         resp = client.get(f"{API_BASE}{path}")
         resp.raise_for_status()
         return resp.json()
 
 
 def api_post(path: str, payload: dict) -> dict:
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=API_TIMEOUT) as client:
         resp = client.post(f"{API_BASE}{path}", json=payload)
         resp.raise_for_status()
         return resp.json()
@@ -82,18 +82,22 @@ def render_document_manager():
 def render_rag_lab():
     st.header("RAG Comparison Lab")
     query = st.text_input("Enter your question", placeholder="What is a cross-encoder reranker?")
+    run_eval = st.checkbox(
+        "Run LLM evaluation (slower — adds extra Ollama calls)",
+        value=False,
+    )
 
     col1, col2 = st.columns(2)
     if query and st.button("Run Comparison", type="primary"):
-        with st.spinner("Running RAG pipeline..."):
+        with st.spinner("Running RAG pipeline (local qwen3:8b can take several minutes)..."):
             try:
                 with_rerank = api_post(
                     "/query",
-                    {"query": query, "use_reranker": True, "run_eval": True},
+                    {"query": query, "use_reranker": True, "run_eval": run_eval},
                 )
                 without_rerank = api_post(
                     "/query",
-                    {"query": query, "use_reranker": False, "run_eval": True},
+                    {"query": query, "use_reranker": False, "run_eval": run_eval},
                 )
 
                 with col1:

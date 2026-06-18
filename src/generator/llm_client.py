@@ -135,28 +135,29 @@ class LLMClient:
                 yield chunk.text
 
     def _ollama_stream(self, prompt: str, system: str | None) -> Iterator[str]:
-        import httpx
+        """Stream from local Ollama via OpenAI-compatible /v1/chat/completions."""
+        from openai import OpenAI
 
         cfg = get_config().llm
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": True,
-            "options": {"temperature": self.temperature},
-        }
-        if system:
-            payload["system"] = system
+        base = cfg.ollama_base_url.rstrip("/")
+        client = OpenAI(
+            base_url=f"{base}/v1",
+            api_key="ollama",
+            timeout=cfg.timeout,
+        )
 
-        with httpx.stream(
-            "POST",
-            f"{cfg.ollama_base_url}/api/generate",
-            json=payload,
-            timeout=120.0,
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                data = json.loads(line)
-                if token := data.get("response"):
-                    yield token
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._build_messages(prompt, system),
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+        }
+        if not cfg.ollama_think:
+            kwargs["extra_body"] = {"think": False}
+
+        stream = client.chat.completions.create(**kwargs)
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta

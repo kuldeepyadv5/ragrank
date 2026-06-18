@@ -178,6 +178,44 @@ class TestLLMClient:
         tokens = list(client.stream("test prompt", system="be helpful"))
         assert tokens == ["Hello "]
 
+    def test_ollama_chat_stream(self, monkeypatch):
+        captured: dict = {}
+
+        class FakeDelta:
+            content = "Hi from Ollama "
+
+        class FakeChoice:
+            delta = FakeDelta()
+
+        class FakeChunk:
+            choices = [FakeChoice()]
+
+        class FakeStream:
+            def __iter__(self):
+                yield FakeChunk()
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return FakeStream()
+
+        class FakeChat:
+            completions = FakeCompletions()
+
+        class FakeOpenAI:
+            def __init__(self, *args, **kwargs):
+                captured["client_kwargs"] = kwargs
+                self.chat = FakeChat()
+
+        import openai
+
+        monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+        client = LLMClient(provider="ollama", model="qwen3:8b")
+        tokens = list(client.stream("Hello from Windows", system="be concise"))
+        assert tokens == ["Hi from Ollama "]
+        assert captured["client_kwargs"]["base_url"] == "http://localhost:11434/v1"
+        assert captured["model"] == "qwen3:8b"
+
 
 class TestEvaluator:
     def test_mock_evaluation(self):
