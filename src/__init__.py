@@ -1,3 +1,3 @@
-"""Enterprise RAG system with PyTorch neural reranker."""
+"""RAGRank — RAG with trainable PyTorch cross-encoder reranker."""
 
 __version__ = "0.1.0"
