@@ -85,8 +85,12 @@ class RetrieveRequest(BaseModel):
 class RetrieveResponse(BaseModel):
     query: str
     retrieved: list[dict[str, Any]]
+    faiss_only: list[dict[str, Any]]
     reranked: list[dict[str, Any]]
+    reranked_trained: list[dict[str, Any]]
+    reranked_untrained: list[dict[str, Any]]
     rank_changes: list[dict[str, Any]]
+    rank_changes_trained: list[dict[str, Any]]
     latency_ms: dict[str, float]
     settings: dict[str, Any]
 
@@ -161,8 +165,12 @@ def retrieve(req: RetrieveRequest) -> RetrieveResponse:
     resp = RetrieveResponse(
         query=result.query,
         retrieved=result.retrieved,
+        faiss_only=result.faiss_only,
         reranked=result.reranked,
+        reranked_trained=result.reranked_trained,
+        reranked_untrained=result.reranked_untrained,
         rank_changes=result.rank_changes,
+        rank_changes_trained=result.rank_changes_trained,
         latency_ms=result.latency_ms,
         settings=result.settings,
     )

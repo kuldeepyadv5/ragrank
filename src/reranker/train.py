@@ -97,8 +97,8 @@ def evaluate_ranking(
         ndcg_scores.append(compute_ndcg_at_k(ranked_relevance, k))
 
     return {
-        f"mrr@{k}": sum(mrr_scores) / max(len(mrr_scores), 1),
-        f"ndcg@{k}": sum(ndcg_scores) / max(len(ndcg_scores), 1),
+        f"mrr_at_{k}": sum(mrr_scores) / max(len(mrr_scores), 1),
+        f"ndcg_at_{k}": sum(ndcg_scores) / max(len(ndcg_scores), 1),
         "accuracy": correct / max(total, 1),
     }
 
@@ -176,6 +176,7 @@ def train(
     examples: list[QueryExample] | None = None,
     output_dir: Path | None = None,
 ) -> Path:
+    print("\nStarting reranker training...",output_dir)
     cfg = get_config().reranker
     tracking = get_config().tracking
     train_examples = examples or default_training_examples()
@@ -242,8 +243,8 @@ def train(
             )
         )
 
-        if metrics.get("mrr@10", 0) >= best_mrr:
-            best_mrr = metrics["mrr@10"]
+        if metrics.get("mrr_at_10", 0) >= best_mrr:
+            best_mrr = metrics["mrr_at_10"]
             torch.save(model.state_dict(), best_path)
 
     _finalize_tracker(tracker)

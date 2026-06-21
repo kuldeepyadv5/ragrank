@@ -143,10 +143,14 @@ class TestFastAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert "retrieved" in data
+        assert "faiss_only" in data
         assert "reranked" in data
+        assert "reranked_trained" in data
+        assert "reranked_untrained" in data
         assert "rank_changes" in data
         assert "answer" not in data
-        assert len(data["reranked"]) <= 2
+        assert len(data["reranked_trained"]) <= 2
+        assert len(data["faiss_only"]) <= 2
 
 
 class TestLLMClient:

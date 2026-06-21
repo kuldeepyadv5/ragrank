@@ -50,6 +50,7 @@ class RerankerService:
         model_name: str | None = None,
         checkpoint_path: Path | None = None,
         device: str | None = None,
+        load_checkpoint: bool = True,
     ):
         cfg = get_config().reranker
         self.model_name = model_name or cfg.model_name
@@ -59,11 +60,16 @@ class RerankerService:
         )
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self.model = NeuralReranker(self.model_name).to(self.device)
+        self.checkpoint_loaded = False
+        self.checkpoint_path: Path | None = None
 
-        ckpt = checkpoint_path or (cfg.checkpoint_dir / "best.pt")
-        if ckpt.exists():
-            state = torch.load(ckpt, map_location=self.device, weights_only=True)
-            self.model.load_state_dict(state)
+        if load_checkpoint:
+            ckpt = checkpoint_path or (cfg.checkpoint_dir / "best.pt")
+            if ckpt.exists():
+                state = torch.load(ckpt, map_location=self.device, weights_only=True)
+                self.model.load_state_dict(state)
+                self.checkpoint_loaded = True
+                self.checkpoint_path = ckpt
         self.model.eval()
 
     @torch.no_grad()

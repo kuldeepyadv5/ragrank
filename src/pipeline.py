@@ -35,8 +35,12 @@ class QueryResult:
 class RetrieveResult:
     query: str
     retrieved: list[dict]
+    faiss_only: list[dict]
     reranked: list[dict]
+    reranked_trained: list[dict]
+    reranked_untrained: list[dict]
     rank_changes: list[dict]
+    rank_changes_trained: list[dict]
     latency_ms: dict[str, float] = field(default_factory=dict)
     settings: dict = field(default_factory=dict)
 
@@ -66,6 +70,7 @@ class RAGPipeline:
     ):
         self.vector_store = vector_store or VectorStore()
         self.reranker = reranker or RerankerService()
+        self._reranker_baseline: RerankerService | None = None
         self.llm = llm or LLMClient()
         self.evaluator = evaluator or RAGEvaluator(self.llm)
         self.text_processor = TextProcessor()
@@ -102,6 +107,37 @@ class RAGPipeline:
         )
         return added
 
+    def _baseline_reranker(self) -> RerankerService:
+        if self._reranker_baseline is None:
+            self._reranker_baseline = RerankerService(load_checkpoint=False)
+        return self._reranker_baseline
+
+    @staticmethod
+    def _build_rank_changes(
+        retrieved: list[dict], reranked: list[dict]
+    ) -> list[dict]:
+        faiss_rank = {c["chunk_id"]: i + 1 for i, c in enumerate(retrieved)}
+        rerank_rank = {c["chunk_id"]: i + 1 for i, c in enumerate(reranked)}
+        all_ids = set(faiss_rank) | set(rerank_rank)
+
+        rank_changes = []
+        for chunk_id in all_ids:
+            fr = faiss_rank.get(chunk_id)
+            rr = rerank_rank.get(chunk_id)
+            rank_changes.append(
+                {
+                    "chunk_id": chunk_id,
+                    "faiss_rank": fr,
+                    "rerank_rank": rr,
+                    "rank_delta": (fr - rr) if fr and rr else None,
+                    "in_top_rerank": chunk_id in rerank_rank,
+                }
+            )
+        rank_changes.sort(
+            key=lambda x: (x["rerank_rank"] is None, x["rerank_rank"] or 9999)
+        )
+        return rank_changes
+
     def retrieve_only(
         self,
         question: str,
@@ -133,54 +169,65 @@ class RAGPipeline:
         )
 
         t1 = time.perf_counter()
-        reranked = (
+        reranked_trained = (
             self.reranker.rerank(question, retrieved, top_k=k_rerank)
             if retrieved
             else []
         )
-        latency["rerank_ms"] = (time.perf_counter() - t1) * 1000
+        latency["rerank_trained_ms"] = (time.perf_counter() - t1) * 1000
         log_pipeline_step(
-            "PyTorch rerank complete",
-            selected=len(reranked),
-            latency_ms=round(latency["rerank_ms"], 1),
-            ranked_results=_chunk_summary(reranked),
+            "Trained reranker complete",
+            selected=len(reranked_trained),
+            latency_ms=round(latency["rerank_trained_ms"], 1),
+            checkpoint_loaded=self.reranker.checkpoint_loaded,
+            ranked_results=_chunk_summary(reranked_trained),
         )
 
-        faiss_rank = {c["chunk_id"]: i + 1 for i, c in enumerate(retrieved)}
-        rerank_rank = {c["chunk_id"]: i + 1 for i, c in enumerate(reranked)}
-        all_ids = set(faiss_rank) | set(rerank_rank)
-
-        rank_changes = []
-        for chunk_id in all_ids:
-            fr = faiss_rank.get(chunk_id)
-            rr = rerank_rank.get(chunk_id)
-            rank_changes.append(
-                {
-                    "chunk_id": chunk_id,
-                    "faiss_rank": fr,
-                    "rerank_rank": rr,
-                    "rank_delta": (fr - rr) if fr and rr else None,
-                    "in_top_rerank": chunk_id in rerank_rank,
-                }
-            )
-        rank_changes.sort(
-            key=lambda x: (x["rerank_rank"] is None, x["rerank_rank"] or 9999)
+        t2 = time.perf_counter()
+        reranked_untrained = (
+            self._baseline_reranker().rerank(question, retrieved, top_k=k_rerank)
+            if retrieved
+            else []
+        )
+        latency["rerank_untrained_ms"] = (time.perf_counter() - t2) * 1000
+        log_pipeline_step(
+            "Untrained reranker complete",
+            selected=len(reranked_untrained),
+            latency_ms=round(latency["rerank_untrained_ms"], 1),
+            ranked_results=_chunk_summary(reranked_untrained),
         )
 
-        latency["total_ms"] = latency["retrieval_ms"] + latency["rerank_ms"]
+        faiss_only = retrieved[:k_rerank]
+        rank_changes_trained = self._build_rank_changes(retrieved, reranked_trained)
+
+        latency["rerank_ms"] = latency["rerank_trained_ms"]
+        latency["total_ms"] = (
+            latency["retrieval_ms"]
+            + latency["rerank_trained_ms"]
+            + latency["rerank_untrained_ms"]
+        )
         log_pipeline_step("Retrieval-only query finished", latency_ms=latency)
+
+        reranker_cfg = get_config().reranker
+        ckpt_path = reranker_cfg.checkpoint_dir / "best.pt"
 
         return RetrieveResult(
             query=question,
             retrieved=retrieved,
-            reranked=reranked,
-            rank_changes=rank_changes,
+            faiss_only=faiss_only,
+            reranked=reranked_trained,
+            reranked_trained=reranked_trained,
+            reranked_untrained=reranked_untrained,
+            rank_changes=rank_changes_trained,
+            rank_changes_trained=rank_changes_trained,
             latency_ms=latency,
             settings={
                 "retrieval_top_k": k_retrieve,
                 "rerank_top_k": k_rerank,
                 "embedding_model": get_config().retriever.embedding_model,
-                "reranker_model": get_config().reranker.model_name,
+                "reranker_model": reranker_cfg.model_name,
+                "trained_checkpoint": str(ckpt_path) if ckpt_path.exists() else None,
+                "trained_checkpoint_loaded": self.reranker.checkpoint_loaded,
             },
         )
 

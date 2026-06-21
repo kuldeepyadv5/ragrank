@@ -142,7 +142,7 @@ def _render_chunk_details(chunks: list[dict], label: str):
 def render_retrieval_check():
     st.header("RAG Retrieval Check")
     st.caption(
-        "Inspect FAISS bi-encoder retrieval and PyTorch cross-encoder reranking — no LLM call."
+        "Compare FAISS retrieval vs trained reranker vs untrained (base) reranker — no LLM call."
     )
 
     cfg = get_config().retriever
@@ -169,7 +169,7 @@ def render_retrieval_check():
         )
 
     if query and st.button("Run Retrieval", type="primary", key="run_retrieval"):
-        with st.spinner("Running FAISS retrieval + PyTorch reranker..."):
+        with st.spinner("Running FAISS + trained & untrained rerankers..."):
             try:
                 result = api_post(
                     "/retrieve",
@@ -180,22 +180,49 @@ def render_retrieval_check():
                     },
                 )
 
-                m1, m2, m3 = st.columns(3)
-                m1.metric("FAISS latency (ms)", f"{result['latency_ms'].get('retrieval_ms', 0):.1f}")
-                m2.metric("Rerank latency (ms)", f"{result['latency_ms'].get('rerank_ms', 0):.1f}")
-                m3.metric("Total (ms)", f"{result['latency_ms'].get('total_ms', 0):.1f}")
+                settings = result.get("settings", {})
+                if not settings.get("trained_checkpoint_loaded"):
+                    st.warning(
+                        "No trained checkpoint found — run `python run.py train` first. "
+                        "Trained and untrained results may look identical until you train."
+                    )
+                else:
+                    st.success(f"Using trained checkpoint: {settings.get('trained_checkpoint')}")
 
-                st.json(result.get("settings", {}))
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("FAISS (ms)", f"{result['latency_ms'].get('retrieval_ms', 0):.1f}")
+                m2.metric("Trained rerank (ms)", f"{result['latency_ms'].get('rerank_trained_ms', 0):.1f}")
+                m3.metric("Untrained rerank (ms)", f"{result['latency_ms'].get('rerank_untrained_ms', 0):.1f}")
+                m4.metric("Total (ms)", f"{result['latency_ms'].get('total_ms', 0):.1f}")
 
-                left, right = st.columns(2)
-                with left:
-                    _render_chunk_details(result["retrieved"], f"FAISS results (top {len(result['retrieved'])})")
-                with right:
-                    _render_chunk_details(result["reranked"], f"After rerank (top {len(result['reranked'])})")
+                st.json(settings)
 
-                st.subheader("Rank changes (FAISS → Reranker)")
-                st.caption("Positive rank_delta = moved up after reranking")
-                changes = result.get("rank_changes", [])
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    _render_chunk_details(
+                        result["faiss_only"],
+                        f"1. FAISS only (top {len(result['faiss_only'])})",
+                    )
+                with col_b:
+                    _render_chunk_details(
+                        result["reranked_trained"],
+                        f"2. Trained reranker (top {len(result['reranked_trained'])})",
+                    )
+                with col_c:
+                    _render_chunk_details(
+                        result["reranked_untrained"],
+                        f"3. Untrained / base reranker (top {len(result['reranked_untrained'])})",
+                    )
+
+                with st.expander(f"Full FAISS pool ({len(result['retrieved'])} candidates)"):
+                    _render_chunk_details(
+                        result["retrieved"],
+                        "All retrieval candidates before reranking",
+                    )
+
+                st.subheader("Rank changes (FAISS → Trained reranker)")
+                st.caption("Positive rank_delta = moved up after trained reranking")
+                changes = result.get("rank_changes_trained", result.get("rank_changes", []))
                 if changes:
                     df = pd.DataFrame(changes)
                     st.dataframe(df, use_container_width=True, hide_index=True)
@@ -203,26 +230,39 @@ def render_retrieval_check():
                     promoted = [c for c in changes if c.get("rank_delta") and c["rank_delta"] > 0]
                     demoted = [c for c in changes if c.get("rank_delta") and c["rank_delta"] < 0]
                     c1, c2 = st.columns(2)
-                    c1.metric("Chunks promoted", len(promoted))
-                    c2.metric("Chunks demoted", len(demoted))
+                    c1.metric("Chunks promoted (trained)", len(promoted))
+                    c2.metric("Chunks demoted (trained)", len(demoted))
 
-                    if result["reranked"]:
-                        chart_df = pd.DataFrame(
-                            [
-                                {
-                                    "chunk": c.get("chunk_id", "")[:8],
-                                    "rerank_score": c.get("rerank_score", 0),
-                                }
-                                for c in result["reranked"]
-                            ]
+                st.subheader("Score comparison (top reranked chunks)")
+                trained = result.get("reranked_trained", [])
+                untrained = result.get("reranked_untrained", [])
+                if trained or untrained:
+                    chart_rows = []
+                    for c in trained:
+                        chart_rows.append(
+                            {
+                                "chunk": c.get("chunk_id", "")[:8],
+                                "score": c.get("rerank_score", 0),
+                                "model": "Trained",
+                            }
                         )
-                        fig = px.bar(
-                            chart_df,
-                            x="chunk",
-                            y="rerank_score",
-                            title="Cross-encoder rerank scores",
+                    for c in untrained:
+                        chart_rows.append(
+                            {
+                                "chunk": c.get("chunk_id", "")[:8],
+                                "score": c.get("rerank_score", 0),
+                                "model": "Untrained",
+                            }
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                    fig = px.bar(
+                        pd.DataFrame(chart_rows),
+                        x="chunk",
+                        y="score",
+                        color="model",
+                        barmode="group",
+                        title="Trained vs untrained rerank scores",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
             except Exception as exc:
                 st.error(f"Retrieval failed: {exc}")
 
