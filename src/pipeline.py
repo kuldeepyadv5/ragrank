@@ -228,6 +228,12 @@ class RAGPipeline:
                 "reranker_model": reranker_cfg.model_name,
                 "trained_checkpoint": str(ckpt_path) if ckpt_path.exists() else None,
                 "trained_checkpoint_loaded": self.reranker.checkpoint_loaded,
+                "reranker_quantization": self.reranker.quantization_mode,
+                "embedding_quantization": (
+                    self.vector_store.quantization_mode
+                    if self.vector_store.quantization_mode != "none"
+                    else ("int8" if self.vector_store.quantize else "none")
+                ),
             },
         )
 

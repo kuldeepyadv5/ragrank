@@ -74,6 +74,8 @@ class HealthResponse(BaseModel):
     status: str
     num_chunks: int
     llm_provider: str
+    reranker_quantization: str = "none"
+    embedding_quantization: str = "none"
 
 
 class RetrieveRequest(BaseModel):
@@ -111,6 +113,12 @@ def health() -> HealthResponse:
         status="ok",
         num_chunks=pipeline.vector_store.num_chunks,
         llm_provider=cfg.llm.provider,
+        reranker_quantization=pipeline.reranker.quantization_mode,
+        embedding_quantization=(
+            pipeline.vector_store.quantization_mode
+            if pipeline.vector_store.quantization_mode != "none"
+            else ("int8" if pipeline.vector_store.quantize else "none")
+        ),
     )
     log_endpoint_response("GET", "/health", resp.model_dump(), (time.perf_counter() - t0) * 1000)
     return resp

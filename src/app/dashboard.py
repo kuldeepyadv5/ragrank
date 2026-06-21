@@ -42,7 +42,9 @@ def render_header():
         health = api_get("/health")
         st.success(
             f"API connected | {health['num_chunks']} chunks indexed | "
-            f"LLM: {health['llm_provider']}"
+            f"LLM: {health['llm_provider']} | "
+            f"Reranker: {health.get('reranker_quantization', 'none')} | "
+            f"Embeddings: {health.get('embedding_quantization', 'none')}"
         )
     except Exception as exc:
         st.error(f"Cannot reach API at {API_BASE}: {exc}")

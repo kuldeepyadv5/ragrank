@@ -248,6 +248,15 @@ def train(
             torch.save(model.state_dict(), best_path)
 
     _finalize_tracker(tracker)
+
+    if cfg.quantize and best_path.exists():
+        try:
+            from src.reranker.quantize import export_quantized_checkpoint
+
+            export_quantized_checkpoint(best_path)
+        except Exception as exc:
+            print(f"Warning: quantized export skipped: {exc}")
+
     return best_path
 
 

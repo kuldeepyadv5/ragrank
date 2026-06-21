@@ -9,9 +9,11 @@ from typing import Sequence
 
 import faiss
 import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 
 from src.config import get_config
+from src.quantization import apply_int8_dynamic_quantization
 from src.retriever.text_processor import DocumentChunk
 
 
@@ -29,6 +31,9 @@ class VectorStore:
         self.index_path = index_path or cfg.index_path
         self.use_ivf = use_ivf if use_ivf is not None else cfg.use_ivf
         self.top_k = cfg.top_k
+        self.quantize = cfg.quantize
+        self.encode_batch_size = cfg.encode_batch_size
+        self.quantization_mode = "none"
 
         self._encoder: SentenceTransformer | None = None
         self._index: faiss.Index | None = None
@@ -42,6 +47,13 @@ class VectorStore:
     def encoder(self) -> SentenceTransformer:
         if self._encoder is None:
             self._encoder = SentenceTransformer(self.embedding_model_name)
+            if self.quantize and not torch.cuda.is_available():
+                transformer_module = self._encoder[0]
+                if hasattr(transformer_module, "auto_model"):
+                    transformer_module.auto_model = apply_int8_dynamic_quantization(
+                        transformer_module.auto_model
+                    )
+                    self.quantization_mode = "int8"
         return self._encoder
 
     @property
@@ -84,7 +96,12 @@ class VectorStore:
             return 0
 
         texts = [c.text for c in chunks]
-        vectors = self.encoder.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        vectors = self.encoder.encode(
+            texts,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+            batch_size=self.encode_batch_size,
+        )
         vectors = np.asarray(vectors, dtype=np.float32)
 
         new_records = [
@@ -113,7 +130,11 @@ class VectorStore:
         if self._index is None or not self._chunks:
             return []
 
-        query_vec = self.encoder.encode([query], convert_to_numpy=True)
+        query_vec = self.encoder.encode(
+            [query],
+            convert_to_numpy=True,
+            batch_size=self.encode_batch_size,
+        )
         query_vec = np.asarray(query_vec, dtype=np.float32)
         k = min(k, len(self._chunks))
         distances, indices = self.index.search(query_vec, k)
@@ -138,6 +159,7 @@ class VectorStore:
             "embedding_model": self.embedding_model_name,
             "num_chunks": len(self._chunks),
             "dim": self._dim,
+            "quantization": self.quantization_mode,
         }
         (self.index_path / "meta.json").write_text(json.dumps(meta, indent=2))
 

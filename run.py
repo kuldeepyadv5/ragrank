@@ -78,6 +78,12 @@ def run_train(epochs: int | None = None) -> None:
     print(f"Training complete. Checkpoint: {path}")
 
 
+def run_quantize() -> None:
+    from src.reranker.quantize import export_all
+
+    export_all()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Enterprise RAG System")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -102,6 +108,8 @@ def main() -> None:
     train_parser = sub.add_parser("train", help="Train PyTorch reranker")
     train_parser.add_argument("--epochs", type=int, default=None)
 
+    sub.add_parser("quantize", help="Export INT8 quantized reranker checkpoint")
+
     sub.add_parser("all", help="Print instructions to run api + dashboard")
 
     args = parser.parse_args()
@@ -112,6 +120,8 @@ def main() -> None:
         run_dashboard(args.port, debug_api=not args.no_debug_api)
     elif args.command == "train":
         run_train(args.epochs)
+    elif args.command == "quantize":
+        run_quantize()
     elif args.command == "all":
         print("Run in separate terminals:")
         print("  python run.py api")

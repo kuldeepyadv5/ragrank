@@ -39,6 +39,8 @@ class RerankerConfig:
     )  # type: ignore[assignment]
     margin: float = float(os.getenv("RERANKER_MARGIN", "0.5"))
     checkpoint_dir: Path = field(default_factory=lambda: MODELS_DIR / "reranker")
+    quantize: bool = os.getenv("RERANKER_QUANTIZE", "true").lower() == "true"
+    use_fp16_on_cuda: bool = os.getenv("RERANKER_FP16_CUDA", "true").lower() == "true"
 
 
 @dataclass
@@ -52,6 +54,8 @@ class RetrieverConfig:
     rerank_top_k: int = int(os.getenv("RERANK_TOP_K", "5"))
     use_ivf: bool = os.getenv("FAISS_USE_IVF", "false").lower() == "true"
     index_path: Path = field(default_factory=lambda: INDEX_DIR)
+    quantize: bool = os.getenv("EMBEDDING_QUANTIZE", "true").lower() == "true"
+    encode_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
 
 
 @dataclass

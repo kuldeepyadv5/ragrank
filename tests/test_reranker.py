@@ -48,6 +48,41 @@ class TestNeuralReranker:
         assert len(ranked) == 2
         assert "rerank_score" in ranked[0]
 
+    def test_quantized_reranker_inference(self):
+        service = RerankerService(
+            model_name="distilbert-base-uncased",
+            load_checkpoint=False,
+            quantize=True,
+        )
+        assert service.quantization_mode in ("int8", "fp16")
+        scores = service.score_pairs(
+            "cross-encoder",
+            ["Cross-encoders rerank documents.", "Unrelated cooking text."],
+        )
+        assert len(scores) == 2
+
+
+class TestQuantization:
+    def test_export_quantized_checkpoint(self, tmp_path):
+        from src.reranker.quantize import export_quantized_checkpoint
+
+        fp32 = tmp_path / "best.pt"
+        model = NeuralReranker("distilbert-base-uncased")
+        torch.save(model.state_dict(), fp32)
+
+        out = export_quantized_checkpoint(fp32, tmp_path / "best_quantized.pt")
+        assert out.exists()
+        assert out.stat().st_size < fp32.stat().st_size
+
+        service = RerankerService(
+            model_name="distilbert-base-uncased",
+            checkpoint_path=out,
+            load_checkpoint=True,
+            quantize=True,
+        )
+        assert service.quantization_mode == "int8"
+        assert service.score_pairs("test", ["doc one", "doc two"])
+
 
 class TestRetriever:
     def test_text_chunking(self, sample_text_file):

@@ -10,6 +10,7 @@ import torch.nn as nn
 from transformers import AutoModel, AutoTokenizer
 
 from src.config import get_config
+from src.quantization import apply_fp16, apply_int8_dynamic_quantization
 
 
 class NeuralReranker(nn.Module):
@@ -51,26 +52,68 @@ class RerankerService:
         checkpoint_path: Path | None = None,
         device: str | None = None,
         load_checkpoint: bool = True,
+        quantize: bool | None = None,
     ):
         cfg = get_config().reranker
         self.model_name = model_name or cfg.model_name
         self.max_length = cfg.max_length
+        self.batch_size = cfg.batch_size
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
+        self.quantize_enabled = cfg.quantize if quantize is None else quantize
+        self.use_fp16 = cfg.use_fp16_on_cuda and self.device.type == "cuda"
+        self.quantization_mode = "none"
+
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = NeuralReranker(self.model_name).to(self.device)
+        self.model = NeuralReranker(self.model_name)
         self.checkpoint_loaded = False
         self.checkpoint_path: Path | None = None
 
+        ckpt_dir = cfg.checkpoint_dir
+        fp32_ckpt = checkpoint_path or (ckpt_dir / "best.pt")
+        quant_ckpt = ckpt_dir / "best_quantized.pt"
+
         if load_checkpoint:
-            ckpt = checkpoint_path or (cfg.checkpoint_dir / "best.pt")
-            if ckpt.exists():
-                state = torch.load(ckpt, map_location=self.device, weights_only=True)
+            if checkpoint_path and "quantized" in checkpoint_path.stem and checkpoint_path.exists():
+                self._load_quantized_checkpoint(checkpoint_path)
+            elif self.quantize_enabled and quant_ckpt.exists() and checkpoint_path is None:
+                self._load_quantized_checkpoint(quant_ckpt)
+            elif fp32_ckpt.exists():
+                state = torch.load(fp32_ckpt, map_location="cpu", weights_only=True)
                 self.model.load_state_dict(state)
                 self.checkpoint_loaded = True
-                self.checkpoint_path = ckpt
+                self.checkpoint_path = fp32_ckpt
+                self._apply_runtime_quantization()
+            else:
+                self._apply_runtime_quantization()
+        else:
+            self._apply_runtime_quantization()
+
+        if not self.use_fp16:
+            self.model.to(self.device)
         self.model.eval()
+
+    def _load_quantized_checkpoint(self, quant_ckpt: Path) -> None:
+        self.model = apply_int8_dynamic_quantization(self.model)
+        state = torch.load(quant_ckpt, map_location="cpu", weights_only=True)
+        self.model.load_state_dict(state)
+        self.checkpoint_loaded = True
+        self.checkpoint_path = quant_ckpt
+        self.quantization_mode = "int8"
+
+    def _apply_runtime_quantization(self) -> None:
+        if not self.quantize_enabled:
+            return
+
+        if self.use_fp16:
+            self.model = apply_fp16(self.model.to(self.device))
+            self.quantization_mode = "fp16"
+            return
+
+        if self.device.type == "cpu":
+            self.model = apply_int8_dynamic_quantization(self.model)
+            self.quantization_mode = "int8"
 
     @torch.no_grad()
     def score_pairs(self, query: str, documents: Sequence[str]) -> list[float]:
@@ -78,19 +121,27 @@ class RerankerService:
             return []
 
         scores: list[float] = []
-        for doc in documents:
+        for start in range(0, len(documents), self.batch_size):
+            batch_docs = list(documents[start : start + self.batch_size])
             encoded = self.tokenizer(
-                query,
-                doc,
+                [query] * len(batch_docs),
+                batch_docs,
                 truncation=True,
                 max_length=self.max_length,
-                padding="max_length",
+                padding=True,
                 return_tensors="pt",
             )
             input_ids = encoded["input_ids"].to(self.device)
             attention_mask = encoded["attention_mask"].to(self.device)
-            score = self.model(input_ids, attention_mask).item()
-            scores.append(score)
+
+            if self.use_fp16:
+                with torch.amp.autocast("cuda", dtype=torch.float16):
+                    batch_scores = self.model(input_ids, attention_mask)
+            else:
+                batch_scores = self.model(input_ids, attention_mask)
+
+            scores.extend(batch_scores.cpu().tolist())
+
         return scores
 
     def rerank(
