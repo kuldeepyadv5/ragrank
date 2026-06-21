@@ -135,6 +135,19 @@ class TestFastAPI:
         assert resp.status_code == 200
         assert resp.json()["chunks_added"] >= 1
 
+    def test_retrieve_only(self, client):
+        resp = client.post(
+            "/retrieve",
+            json={"query": "cross-encoder", "retrieval_top_k": 5, "rerank_top_k": 2},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "retrieved" in data
+        assert "reranked" in data
+        assert "rank_changes" in data
+        assert "answer" not in data
+        assert len(data["reranked"]) <= 2
+
 
 class TestLLMClient:
     def test_qwen_requires_api_key(self, monkeypatch):

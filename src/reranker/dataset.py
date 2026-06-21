@@ -135,20 +135,64 @@ def default_training_examples() -> list[QueryExample]:
     """Minimal synthetic training set for bootstrapping."""
     return [
         QueryExample(
-            query="What is a cross-encoder reranker?",
-            positive="A cross-encoder feeds query and document together into a transformer.",
-            negative="PyTorch tensors support automatic differentiation via autograd.",
+            query="Best SUV under 15 lakh in India for a family of 5",
+            positive="Mahindra XUV 3XO offers good safety ratings, spacious seating for 5, and is priced under 15 lakh.",
+            negative="BMW X5 is a luxury SUV priced above 1 crore."
         ),
+
         QueryExample(
-            query="How does FAISS work?",
-            positive="FAISS is a library for efficient similarity search over dense vectors.",
-            negative="Streamlit is a framework for building interactive Python dashboards.",
+            query="Best mileage petrol car under 10 lakh",
+            positive="Maruti Suzuki Baleno delivers around 22 kmpl mileage and falls within a 10 lakh budget.",
+            negative="Toyota Fortuner focuses on power and space rather than fuel efficiency."
         ),
+
         QueryExample(
-            query="What metrics evaluate retrieval quality?",
-            positive="MRR@K and NDCG@K are common ranking metrics for retrieval systems.",
-            negative="AdamW is an optimizer with decoupled weight decay.",
+            query="Latest electric SUV launched in India",
+            positive="Mahindra BE 6 is a recently launched electric SUV with modern features and long driving range.",
+            negative="Hyundai Creta Petrol is an internal combustion vehicle."
         ),
+
+        QueryExample(
+            query="Safe car for highway driving",
+            positive="Volkswagen Virtus has strong build quality and high safety ratings suitable for highway travel.",
+            negative="A low-speed electric scooter is not designed for highway driving."
+        ),
+
+        QueryExample(
+            query="Best car for Bangalore city traffic",
+            positive="Hyundai i20 offers compact dimensions, automatic transmission options, and city-friendly driving.",
+            negative="Force Gurkha is primarily designed for off-road adventures."
+        ),
+
+        QueryExample(
+            query="Electric car with more than 400 km range",
+            positive="Tata Curvv EV offers a claimed range exceeding 400 km on a full charge.",
+            negative="Maruti WagonR Petrol does not provide electric driving range."
+        ),
+
+        QueryExample(
+            query="Best SUV for off-road trips",
+            positive="Mahindra Thar includes 4x4 capability, high ground clearance, and terrain modes.",
+            negative="Honda Amaze is a compact sedan focused on city driving."
+        ),
+
+        QueryExample(
+            query="7 seater car under 20 lakh",
+            positive="Mahindra Scorpio N provides 7-seat capacity and fits within the specified budget.",
+            negative="MG Comet EV seats only four passengers."
+        ),
+
+        QueryExample(
+            query="Best luxury sedan in India",
+            positive="Mercedes-Benz E-Class offers premium comfort, technology, and luxury features.",
+            negative="Maruti Alto is an entry-level hatchback."
+        ),
+
+        QueryExample(
+            query="Car suitable for daily office commute and occasional long drives",
+            positive="Honda City provides comfort, reliability, and fuel efficiency for both city and highway use.",
+            negative="Mahindra Bolero Camper is designed primarily for commercial utility."
+        )
     ]
 
 

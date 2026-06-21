@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import os
-
-import httpx
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.app.api_client import DashboardApiClient, setup_api_logging
 from src.config import get_config
 
 st.set_page_config(
@@ -18,31 +16,22 @@ st.set_page_config(
     layout="wide",
 )
 
+setup_api_logging()
 cfg = get_config()
 API_BASE = cfg.app.api_base_url
-API_TIMEOUT = float(os.getenv("API_CLIENT_TIMEOUT", "600"))
+api = DashboardApiClient(base_url=API_BASE)
 
 
 def api_get(path: str) -> dict:
-    with httpx.Client(timeout=API_TIMEOUT) as client:
-        resp = client.get(f"{API_BASE}{path}")
-        resp.raise_for_status()
-        return resp.json()
+    return api.get(path)
 
 
 def api_post(path: str, payload: dict) -> dict:
-    with httpx.Client(timeout=API_TIMEOUT) as client:
-        resp = client.post(f"{API_BASE}{path}", json=payload)
-        resp.raise_for_status()
-        return resp.json()
+    return api.post(path, payload)
 
 
 def api_upload(files: list) -> dict:
-    with httpx.Client(timeout=300.0) as client:
-        multipart = [("files", (f.name, f.getvalue(), f.type)) for f in files]
-        resp = client.post(f"{API_BASE}/ingest", files=multipart)
-        resp.raise_for_status()
-        return resp.json()
+    return api.upload(files)
 
 
 def render_header():
@@ -119,21 +108,123 @@ def render_rag_lab():
                 st.error(f"Query failed: {exc}")
 
 
-def _render_context_table(contexts: list[dict]):
+def _render_context_table(contexts: list[dict], score_key: str = "rerank_score"):
     if not contexts:
         st.info("No contexts retrieved")
         return
     rows = []
     for i, ctx in enumerate(contexts):
+        score = ctx.get(score_key, ctx.get("retrieval_score", 0))
         rows.append(
             {
                 "Rank": i + 1,
-                "Score": ctx.get("rerank_score", ctx.get("retrieval_score", 0)),
+                "Score": round(float(score), 4) if score is not None else None,
+                "Chunk ID": ctx.get("chunk_id", "?"),
                 "Source": ctx.get("source", "?"),
-                "Preview": ctx.get("text", "")[:120] + "...",
+                "Page": ctx.get("page", "-"),
+                "Preview": (ctx.get("text") or "")[:120] + "...",
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_chunk_details(chunks: list[dict], label: str):
+    st.subheader(label)
+    _render_context_table(
+        chunks,
+        score_key="rerank_score" if any("rerank_score" in c for c in chunks) else "retrieval_score",
+    )
+    for i, ctx in enumerate(chunks):
+        with st.expander(f"#{i + 1} {ctx.get('source', '?')} — {ctx.get('chunk_id', '')}"):
+            st.markdown(ctx.get("text", ""))
+
+
+def render_retrieval_check():
+    st.header("RAG Retrieval Check")
+    st.caption(
+        "Inspect FAISS bi-encoder retrieval and PyTorch cross-encoder reranking — no LLM call."
+    )
+
+    cfg = get_config().retriever
+    query = st.text_input(
+        "Query",
+        key="retrieval_query",
+        placeholder="What is a cross-encoder reranker?",
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        retrieval_top_k = st.slider(
+            "FAISS retrieval top-K",
+            min_value=1,
+            max_value=50,
+            value=cfg.top_k,
+        )
+    with col2:
+        rerank_top_k = st.slider(
+            "Reranker top-K",
+            min_value=1,
+            max_value=20,
+            value=cfg.rerank_top_k,
+        )
+
+    if query and st.button("Run Retrieval", type="primary", key="run_retrieval"):
+        with st.spinner("Running FAISS retrieval + PyTorch reranker..."):
+            try:
+                result = api_post(
+                    "/retrieve",
+                    {
+                        "query": query,
+                        "retrieval_top_k": retrieval_top_k,
+                        "rerank_top_k": rerank_top_k,
+                    },
+                )
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("FAISS latency (ms)", f"{result['latency_ms'].get('retrieval_ms', 0):.1f}")
+                m2.metric("Rerank latency (ms)", f"{result['latency_ms'].get('rerank_ms', 0):.1f}")
+                m3.metric("Total (ms)", f"{result['latency_ms'].get('total_ms', 0):.1f}")
+
+                st.json(result.get("settings", {}))
+
+                left, right = st.columns(2)
+                with left:
+                    _render_chunk_details(result["retrieved"], f"FAISS results (top {len(result['retrieved'])})")
+                with right:
+                    _render_chunk_details(result["reranked"], f"After rerank (top {len(result['reranked'])})")
+
+                st.subheader("Rank changes (FAISS → Reranker)")
+                st.caption("Positive rank_delta = moved up after reranking")
+                changes = result.get("rank_changes", [])
+                if changes:
+                    df = pd.DataFrame(changes)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+                    promoted = [c for c in changes if c.get("rank_delta") and c["rank_delta"] > 0]
+                    demoted = [c for c in changes if c.get("rank_delta") and c["rank_delta"] < 0]
+                    c1, c2 = st.columns(2)
+                    c1.metric("Chunks promoted", len(promoted))
+                    c2.metric("Chunks demoted", len(demoted))
+
+                    if result["reranked"]:
+                        chart_df = pd.DataFrame(
+                            [
+                                {
+                                    "chunk": c.get("chunk_id", "")[:8],
+                                    "rerank_score": c.get("rerank_score", 0),
+                                }
+                                for c in result["reranked"]
+                            ]
+                        )
+                        fig = px.bar(
+                            chart_df,
+                            x="chunk",
+                            y="rerank_score",
+                            title="Cross-encoder rerank scores",
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+            except Exception as exc:
+                st.error(f"Retrieval failed: {exc}")
 
 
 def render_telemetry():
@@ -183,12 +274,16 @@ def render_telemetry():
 
 def main():
     render_header()
-    tab1, tab2, tab3 = st.tabs(["Documents", "RAG Lab", "Telemetry"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["Documents", "RAG Lab", "Retrieval Check", "Telemetry"]
+    )
     with tab1:
         render_document_manager()
     with tab2:
         render_rag_lab()
     with tab3:
+        render_retrieval_check()
+    with tab4:
         render_telemetry()
 
 
