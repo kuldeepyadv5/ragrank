@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from pydoc import text
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -90,38 +91,90 @@ class TextProcessor:
         source: str,
         pages: list[tuple[int, str]] | None = None,
     ) -> list[DocumentChunk]:
-        normalized = re.sub(r"\s+", " ", text).strip()
-        if not normalized:
+        if not text or not text.strip():
             return []
 
         chunks: list[DocumentChunk] = []
-        start = 0
         chunk_index = 0
 
-        while start < len(normalized):
-            end = min(start + self.chunk_size, len(normalized))
-            chunk_text = normalized[start:end].strip()
-            if chunk_text:
+        # Split by paragraphs.
+        # A paragraph means text separated by one or more blank lines.
+        paragraphs = re.split(r"\n\s*\n+", text)
+
+        for paragraph in paragraphs:
+            paragraph = re.sub(r"\s+", " ", paragraph).strip()
+
+            if not paragraph:
+                continue
+
+            words = paragraph.split()
+
+            # Case 1: paragraph is smaller than chunk size
+            # Keep full paragraph as one chunk.
+            if len(words) <= self.chunk_size:
+                chunk_text = paragraph
+
                 page_num = self._estimate_page(chunk_text, pages) if pages else None
+
                 chunk_id = hashlib.md5(
                     f"{source}:{chunk_index}:{chunk_text[:64]}".encode()
                 ).hexdigest()[:12]
+
                 chunks.append(
                     DocumentChunk(
                         chunk_id=chunk_id,
                         text=chunk_text,
                         source=source,
                         page=page_num,
-                        metadata={"chunk_index": chunk_index},
+                        metadata={
+                            "chunk_index": chunk_index,
+                            "word_count": len(words),
+                            "chunk_type": "paragraph",
+                        },
                     )
                 )
+
                 chunk_index += 1
-            if end >= len(normalized):
-                break
-            start = max(end - self.chunk_overlap, start + 1)
+                continue
+
+            # Case 2: paragraph is bigger than chunk size
+            # Split it into word-based chunks.
+            start = 0
+
+            while start < len(words):
+                end = min(start + self.chunk_size, len(words))
+                chunk_words = words[start:end]
+                chunk_text = " ".join(chunk_words).strip()
+
+                if chunk_text:
+                    page_num = self._estimate_page(chunk_text, pages) if pages else None
+
+                    chunk_id = hashlib.md5(
+                        f"{source}:{chunk_index}:{chunk_text[:64]}".encode()
+                    ).hexdigest()[:12]
+
+                    chunks.append(
+                        DocumentChunk(
+                            chunk_id=chunk_id,
+                            text=chunk_text,
+                            source=source,
+                            page=page_num,
+                            metadata={
+                                "chunk_index": chunk_index,
+                                "word_count": len(chunk_words),
+                                "chunk_type": "split_large_paragraph",
+                            },
+                        )
+                    )
+
+                    chunk_index += 1
+
+                if end >= len(words):
+                    break
+
+                start = max(end - self.chunk_overlap, start + 1)
 
         return chunks
-
     def process_file(self, file_path: Path | str) -> list[DocumentChunk]:
         path = Path(file_path)
         _, pages = self.extract_text(path)
@@ -136,7 +189,12 @@ class TextProcessor:
 
     @staticmethod
     def _estimate_page(chunk: str, pages: list[tuple[int, str]]) -> int | None:
+        normalized_chunk = re.sub(r"\s+", " ", chunk).strip()
+
         for page_num, page_text in pages:
-            if chunk[:80] in re.sub(r"\s+", " ", page_text):
+            normalized_page = re.sub(r"\s+", " ", page_text).strip()
+
+            if normalized_chunk[:80] in normalized_page:
                 return page_num
+
         return pages[0][0] if pages else None
